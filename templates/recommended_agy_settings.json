@@ -1,0 +1,30 @@
+{
+  "agentMode": "auto",
+  "colorScheme": "tokyo night",
+  "enableTerminalSandbox": false,
+  "model": "Gemini 4 Carbon (High)",
+  "permissions": {
+    "allow": [
+      "command(python3)",
+      "command(/usr/bin/python3)",
+      "command(pytest)",
+      "command(nvidia-smi)",
+      "command(ssh)",
+      "command(rsync)",
+      "command(scp)",
+      "command(git)",
+      "command(uv)",
+      "mcp(auto-research-codex/*)"
+    ],
+    "deny": [
+      "command(sudo)",
+      "command(rm -rf /)"
+    ]
+  },
+  "statusLine": {
+    "type": "",
+    "command": "",
+    "enabled": true
+  },
+  "trustedWorkspaces": []
+}

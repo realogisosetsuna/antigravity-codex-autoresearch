@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "auto-research-codex": {
+      "command": "{{PYTHON_BIN}}",
+      "args": [
+        "-u",
+        "{{HUB_ROOT}}/mcp/codex_astra_mcp.py"
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "auto-research",
+  "displayName": "Auto Research & Astra Bridge",
+  "version": "1.2.0",
+  "author": "realogisosetsuna",
+  "repository": "https://github.com/realogisosetsuna/antigravity-codex-autoresearch",
+  "description": "Long-horizon autonomous research toolkit pairing Gemini 4 Carbon (Antigravity) with GPT-6.2-Astra Ultra (Codex MCP), deterministic safety/goal hooks, multi-node GPU scheduling, and shared experiment ledgers.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Initialize a new Auto Research project from my survey/plan Markdown documents and draft RESEARCH_PLAN.md",
+    "Consult Astra Ultra to critique the current experiment hypothesis and check for data leakage before launching GPU training",
+    "Run an autonomous hypothesis-implement-verify loop and record every trial into EXPERIMENTS.tsv"
+  ]
+}

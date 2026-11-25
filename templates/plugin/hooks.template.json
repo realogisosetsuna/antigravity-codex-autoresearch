@@ -1,0 +1,25 @@
+{
+  "auto-research-safety-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command|write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{PYTHON_BIN}} {{HUB_ROOT}}/hooks/pre_tool_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "auto-research-goal-gate": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "{{PYTHON_BIN}} {{HUB_ROOT}}/hooks/stop_goal_gate.py",
+        "timeout": 10
+      }
+    ]
+  }
+}

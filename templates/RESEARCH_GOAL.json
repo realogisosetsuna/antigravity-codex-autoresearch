@@ -1,0 +1,12 @@
+{
+  "project": "{{PROJECT_NAME}}",
+  "objective": "{{OBJECTIVE}}",
+  "conversation_id": "",
+  "active": false,
+  "completed": false,
+  "min_experiments": 3,
+  "required_files": [
+    "RESEARCH_PLAN.md",
+    "EXPERIMENTS.tsv"
+  ]
+}

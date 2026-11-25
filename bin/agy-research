@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+HUB_ROOT="$(cd -- "$(dirname -- "${SCRIPT_PATH}")/.." && pwd)"
+AGY_BIN="${AGY_BIN:-$(command -v agy || echo "${HOME}/.local/bin/agy")}"
+if [[ ! -x "${AGY_BIN}" ]] && [[ -x "${HOME}/agy" ]]; then
+  AGY_BIN="${HOME}/agy"
+fi
+PYTHON_BIN="${PYTHON_BIN:-$(command -v /usr/bin/python3 || command -v python3)}"
+
+usage() {
+  cat <<EOF
+Usage:
+  agy-research [options] [-- <extra agy flags/prompt>]
+
+Defaults:
+  - Hub root: ${HUB_ROOT}
+  - Execution mode: auto (--mode auto)
+  - Reasoning effort: high (--effort high, override with -e xhigh|max)
+  - Cross-node SSH, local/remote GPUs, data disks & network: ENABLED by default
+  - Smart Proxy Selection:
+      1) Automatically prefers 24/7 local Mihomo daemon (127.0.0.1:27890 by default) when online
+      2) Falls back to active \$HTTPS_PROXY or SSH reverse tunnel (127.0.0.1:17899)
+      3) Sets NO_PROXY for localhost & RFC1918 LAN so ls_core RPC and intra-cluster SSH/traffic stay direct
+
+Options:
+  -P, --project <name_or_path>  Open inside ${HUB_ROOT}/projects/<name> (or abs path)
+  -d, --add-dir <dir>           Additional directory to attach to workspace scope (repeatable)
+  -e, --effort <level>          Carbon reasoning effort: low|medium|high|xhigh|max (default: high)
+  -t, --tmux [session_name]     Run inside a persistent tmux session (creates or attaches)
+  --proxy <url>                 Explicitly override HTTP/HTTPS proxy URL
+  --sandboxed                   Re-enable strict OS terminal sandbox
+  --unsandboxed                 Explicit no-op alias (unsandboxed is already the default)
+  -h, --help                    Show this help
+EOF
+}
+
+port_open() {
+  "${PYTHON_BIN}" - "$1" <<'PY'
+import socket, sys
+try:
+    with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.3):
+        sys.exit(0)
+except OSError:
+    sys.exit(1)
+PY
+}
+
+MIHOMO_PORT="$(HUB_ROOT="${HUB_ROOT}" "${PYTHON_BIN}" - <<'PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["HUB_ROOT"], "scripts"))
+from ar_config import load_cluster_config
+cfg, _ = load_cluster_config()
+print(int((cfg.get("local_mihomo") or {}).get("proxy_port") or 27890))
+PY
+)"
+
+TARGET_DIR="${HUB_ROOT}"
+EFFORT="high"
+USE_TMUX=0
+TMUX_SESSION=""
+SANDBOXED=0
+EXPLICIT_PROXY=""
+ADD_DIRS=("${HUB_ROOT}" "${HOME}")
+EXTRA_ARGS=()
+
+# Attach extra configured workspace directories (e.g. shared NAS mounts) from cluster config
+while IFS= read -r extra_d; do
+  if [[ -n "${extra_d}" ]] && [[ -d "${extra_d}" ]]; then
+    ADD_DIRS+=("${extra_d}")
+  fi
+done < <(HUB_ROOT="${HUB_ROOT}" "${PYTHON_BIN}" - <<'PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["HUB_ROOT"], "scripts"))
+from ar_config import load_cluster_config
+cfg, _ = load_cluster_config()
+for d in cfg.get("extra_workspace_dirs") or []:
+    print(d)
+PY
+)
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -P|--project)
+      p="${2:?Missing value for --project}"
+      if [[ "$p" == /* ]]; then
+        TARGET_DIR="$p"
+      else
+        TARGET_DIR="${HUB_ROOT}/projects/$p"
+      fi
+      shift 2
+      ;;
+    -d|--add-dir)
+      ADD_DIRS+=("${2:?Missing value for --add-dir}")
+      shift 2
+      ;;
+    -e|--effort)
+      EFFORT="${2:?Missing value for --effort}"
+      shift 2
+      ;;
+    -t|--tmux)
+      USE_TMUX=1
+      if [[ $# -gt 1 ]] && [[ "${2:-}" != -* ]]; then
+        TMUX_SESSION="$2"
+        shift 2
+      else
+        TMUX_SESSION="agy_$(basename "${TARGET_DIR}")"
+        shift 1
+      fi
+      ;;
+    --proxy)
+      EXPLICIT_PROXY="${2:?Missing URL for --proxy}"
+      shift 2
+      ;;
+    --sandboxed)
+      SANDBOXED=1
+      shift 1
+      ;;
+    --unsandboxed)
+      SANDBOXED=0
+      shift 1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      EXTRA_ARGS+=("$@")
+      break
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ ! -d "${TARGET_DIR}" ]]; then
+  echo "Target directory does not exist: ${TARGET_DIR}" >&2
+  echo "Tip: initialize it first with: ${HUB_ROOT}/scripts/init_experiment.sh $(basename "${TARGET_DIR}")" >&2
+  exit 1
+fi
+
+SELECTED_PROXY=""
+if [[ -n "${EXPLICIT_PROXY}" ]]; then
+  SELECTED_PROXY="${EXPLICIT_PROXY}"
+elif port_open "${MIHOMO_PORT}"; then
+  SELECTED_PROXY="http://127.0.0.1:${MIHOMO_PORT}"
+  echo "[agy-research] Using 24/7 local AI Mihomo proxy: ${SELECTED_PROXY} (SSH-disconnect & laptop-sleep safe)"
+elif port_open 17899; then
+  SELECTED_PROXY="http://127.0.0.1:17899"
+  echo "[agy-research] Warning: Using SSH reverse tunnel ${SELECTED_PROXY} (will drop if client sleeps)." >&2
+  echo "[agy-research] Tip: Run 'python3 ${HUB_ROOT}/proxy/setup_local_mihomo.py setup --prompt-url' once for 24/7 local proxy." >&2
+elif [[ -n "${HTTPS_PROXY:-${https_proxy:-}}" ]]; then
+  SELECTED_PROXY="${HTTPS_PROXY:-${https_proxy}}"
+fi
+
+export AUTO_RESEARCH_HOME="${HUB_ROOT}"
+export NO_PROXY="127.0.0.1,localhost,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+export no_proxy="${NO_PROXY}"
+if [[ -n "${SELECTED_PROXY}" ]]; then
+  export http_proxy="${SELECTED_PROXY}"
+  export https_proxy="${SELECTED_PROXY}"
+  export HTTP_PROXY="${SELECTED_PROXY}"
+  export HTTPS_PROXY="${SELECTED_PROXY}"
+fi
+
+CMD=("${AGY_BIN}" "--mode" "auto" "--effort" "${EFFORT}")
+for d in "${ADD_DIRS[@]}"; do
+  CMD+=("--add-dir" "$d")
+done
+if [[ "${SANDBOXED}" -eq 1 ]]; then
+  CMD+=("--sandbox")
+else
+  CMD+=("--settings" '{"enableTerminalSandbox":false}')
+fi
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  CMD+=("${EXTRA_ARGS[@]}")
+fi
+
+cd "${TARGET_DIR}"
+if [[ "${USE_TMUX}" -eq 1 ]]; then
+  if tmux has-session -t "${TMUX_SESSION}" 2>/dev/null; then
+    if [[ -n "${SELECTED_PROXY}" ]]; then
+      tmux set-environment -t "${TMUX_SESSION}" http_proxy "${SELECTED_PROXY}" || true
+      tmux set-environment -t "${TMUX_SESSION}" https_proxy "${SELECTED_PROXY}" || true
+      tmux set-environment -t "${TMUX_SESSION}" HTTP_PROXY "${SELECTED_PROXY}" || true
+      tmux set-environment -t "${TMUX_SESSION}" HTTPS_PROXY "${SELECTED_PROXY}" || true
+      tmux set-environment -t "${TMUX_SESSION}" NO_PROXY "${NO_PROXY}" || true
+      tmux set-environment -t "${TMUX_SESSION}" no_proxy "${NO_PROXY}" || true
+    fi
+    exec tmux attach-session -t "${TMUX_SESSION}"
+  else
+    exec tmux new-session -s "${TMUX_SESSION}" -c "${TARGET_DIR}" "${CMD[@]}"
+  fi
+else
+  exec "${CMD[@]}"
+fi

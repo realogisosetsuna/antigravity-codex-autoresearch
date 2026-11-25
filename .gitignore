@@ -1,0 +1,25 @@
+# Private / runtime directories (never publish to Git)
+/projects/*
+!/projects/.gitkeep
+/logs/*
+!/logs/.gitkeep
+/config/cluster.local.json
+/plugins/auto-research/mcp_config.json
+/plugins/auto-research/hooks.json
+
+# Python & OS caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+.DS_Store
+
+# Secrets / credentials safety net
+agent.md
+*auth*.json
+*sub*.yaml
+*.pem
+*.key
+.env
+.env.*

@@ -1,0 +1,33 @@
+{
+  "nodes": {
+    "node1": {
+      "ip": "10.0.0.11",
+      "user": "researcher",
+      "home": "/home/researcher",
+      "disks": ["/mnt/data1", "/mnt/data2", "/mnt/nas", "/home"]
+    },
+    "node2": {
+      "ip": "10.0.0.12",
+      "user": "researcher",
+      "home": "/home/researcher",
+      "disks": ["/mnt/data1", "/mnt/data2", "/mnt/nas", "/home"]
+    }
+  },
+  "ssh_askpass_helper": "",
+  "credential_file": "",
+  "production_root": "",
+  "frozen_readonly_paths": [],
+  "production_protected_paths": [],
+  "extra_workspace_dirs": [],
+  "gpu_auto_reserve": {
+    "host": "",
+    "status_file": "",
+    "control_script": "",
+    "service_name": ""
+  },
+  "local_mihomo": {
+    "service_name": "ai-mihomo.service",
+    "proxy_port": 27890,
+    "ctrl_port": 29090
+  }
+}

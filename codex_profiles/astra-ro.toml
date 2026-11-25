@@ -1,0 +1,7 @@
+# Safe Read-Only Codex Profile for Auto Research Consultation & Review (Astra Ultra)
+# Usage: codex -p astra-ro  OR  codex exec -p astra-ro ...
+
+model = "gpt-6.2-astra"
+model_reasoning_effort = "ultra"
+approval_policy = "never"
+sandbox_mode = "read-only"

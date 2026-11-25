@@ -1,0 +1,11 @@
+# Controlled Workspace-Write Codex Profile for Auto Research Coding (Astra Ultra + Network)
+# Recommended with `--worktree` so Astra edits an isolated Git worktree.
+# Usage: codex -p astra-code --worktree
+
+model = "gpt-6.2-astra"
+model_reasoning_effort = "ultra"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
