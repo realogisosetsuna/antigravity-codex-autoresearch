@@ -32,7 +32,7 @@ flowchart LR
 3. **跨节点零回显 GPU 与存储控制器（`scripts/cluster_ctl.py`）**
    - 单机开箱即用（自动探测本机 GPU 与磁盘），配置 `config/cluster.local.json` 后支持多节点并发巡检（`status`）、智能选卡（`recommend-gpus`）、识别备用占卡服务（`RESERVED_BY_US` vs `EXCLUDED_IN_USE`）、后台脱离终端拉起训练（`launch-bg`，自动注入 `CUDA_DEVICE_ORDER=PCI_BUS_ID`）、状态与日志巡检（`check-job`）以及 `rsync` 传数（`sync`）。
 4. **24/7 脱离客户端休眠的常驻守护（`tmux` + `proxy/setup_local_mihomo.py`）**
-   - 一键部署用户级 `systemd` 常驻 `mihomo`（Clash Meta）代理服务（默认 `127.0.0.1:27890`，0ms 无 GeoIP 依赖启动，自动优选美/新/台 IEPL 节点并注入内网 `NO_PROXY`），彻底摆脱笔记本 SSH `-R` 反向代理休眠断流问题。
+   - 一键部署用户级 `systemd` 常驻 `mihomo`（Clash Meta）代理服务（默认 `127.0.0.1:27890`，0ms 无 GeoIP 依赖启动，默认纯单区锁定低倍率**日本 `1x` 专线出口**，采用 `300ms` 迟滞容差 + `30min` 低频检测并关闭全节点后台轮询，实现跨国零探测且仅在当前节点故障或延迟严重恶化时平滑切换，同时注入内网 `NO_PROXY`），彻底摆脱笔记本 SSH `-R` 反向代理休眠断流与出口频繁跳变问题。
 
 ---
 
