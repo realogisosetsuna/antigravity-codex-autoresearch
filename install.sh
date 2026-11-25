@@ -22,10 +22,18 @@ chmod +x "${HUB_ROOT}/install.sh" \
          "${HUB_ROOT}/scripts/sync_plugin.sh" \
          "${HUB_ROOT}/scripts/self_check.py"
 
-# 1. Symlink launcher & safe Codex profiles
+# 1. Symlink launcher & safe Codex profiles (+ optional bundled offline mihomo binary)
 ln -sfn "${HUB_ROOT}/bin/agy-research" "${HOME}/.local/bin/agy-research"
 ln -sfn "${HUB_ROOT}/codex_profiles/astra-ro.toml" "${HOME}/.codex/astra-ro.config.toml"
 ln -sfn "${HUB_ROOT}/codex_profiles/astra-code.toml" "${HOME}/.codex/astra-code.config.toml"
+
+if [[ -f "${HUB_ROOT}/vendor/mihomo" ]] && ! command -v mihomo >/dev/null 2>&1 && [[ ! -x "${HOME}/.local/bin/mihomo" ]]; then
+  if [[ "$(uname -m)" == "x86_64" ]]; then
+    cp -f "${HUB_ROOT}/vendor/mihomo" "${HOME}/.local/bin/mihomo"
+    chmod +x "${HOME}/.local/bin/mihomo"
+    echo "[ OK ] Installed bundled offline mihomo binary -> ${HOME}/.local/bin/mihomo"
+  fi
+fi
 
 # Ensure ~/.local/bin is on PATH for current process
 export PATH="${HOME}/.local/bin:${PATH}"

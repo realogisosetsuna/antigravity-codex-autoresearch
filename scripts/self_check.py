@@ -84,7 +84,7 @@ def test_binaries_and_plugin() -> None:
     )
 
 
-def test_mcp_protocol_and_ultra_default(mock_cfg_env: dict[str, str]) -> None:
+def test_mcp_protocol_and_ultra_default(mock_cfg_env: dict[str, str], mock_raw_dir: str) -> None:
     mcp_src = MCP_SCRIPT.read_text(encoding="utf-8")
     check('DEFAULT_EFFORT = os.environ.get("ASTRA_REASONING_EFFORT", "ultra")' in mcp_src, "MCP default reasoning_effort is ultra")
 
@@ -107,7 +107,7 @@ def test_mcp_protocol_and_ultra_default(mock_cfg_env: dict[str, str]) -> None:
             "method": "tools/call",
             "params": {
                 "name": "astra_code",
-                "arguments": {"prompt": "test", "cwd": "/tmp/mock_frozen_raw"},
+                "arguments": {"prompt": "test", "cwd": mock_raw_dir},
             },
         },
     ]
@@ -138,7 +138,7 @@ def test_mcp_protocol_and_ultra_default(mock_cfg_env: dict[str, str]) -> None:
     check(lines[2]["result"]["isError"] is True, "MCP blocks writes to configured frozen_readonly_paths")
 
 
-def test_cluster_and_proxy_clis(mock_cfg_env: dict[str, str]) -> None:
+def test_cluster_and_proxy_clis(mock_cfg_env: dict[str, str], mock_raw_dir: str) -> None:
     res_help = subprocess.run(
         [PYTHON_BIN, str(CLUSTER_CTL), "--help"],
         capture_output=True,
@@ -157,7 +157,7 @@ def test_cluster_and_proxy_clis(mock_cfg_env: dict[str, str]) -> None:
             "--src",
             "/tmp",
             "--dst",
-            "/tmp/mock_frozen_raw/sub",
+            f"{mock_raw_dir}/sub",
             "--dry-run",
         ],
         capture_output=True,
@@ -176,7 +176,7 @@ def test_cluster_and_proxy_clis(mock_cfg_env: dict[str, str]) -> None:
     check(res_mihomo.returncode == 0 and "--prompt-url" in res_mihomo.stdout, "setup_local_mihomo.py CLI ready")
 
 
-def test_hooks_and_project_lifecycle(mock_cfg_env: dict[str, str]) -> None:
+def test_hooks_and_project_lifecycle(mock_cfg_env: dict[str, str], mock_raw_dir: str) -> None:
     r_slurm = run_json_hook(
         PRE_HOOK,
         {"toolCall": {"name": "run_command", "args": {"CommandLine": "sbatch train.sh"}}, "cwd": "/tmp"},
@@ -221,7 +221,7 @@ def test_hooks_and_project_lifecycle(mock_cfg_env: dict[str, str]) -> None:
 
     r_raw_write = run_json_hook(
         PRE_HOOK,
-        {"toolCall": {"name": "write_file", "args": {"Path": "/tmp/mock_frozen_raw/test.txt"}}, "cwd": "/tmp"},
+        {"toolCall": {"name": "write_file", "args": {"Path": f"{mock_raw_dir}/test.txt"}}, "cwd": "/tmp"},
         mock_cfg_env,
     )
     check(r_raw_write.get("decision") == "deny", "PreToolUse blocks write_file on frozen_readonly_paths")
@@ -309,14 +309,13 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ar_cfg_") as tmp:
         mock_raw = Path(tmp) / "mock_frozen_raw"
         mock_raw.mkdir(parents=True, exist_ok=True)
-        # Also create /tmp/mock_frozen_raw for path check
-        Path("/tmp/mock_frozen_raw").mkdir(parents=True, exist_ok=True)
+        mock_raw_str = str(mock_raw)
         cfg_file = Path(tmp) / "cluster.test.json"
         cfg_file.write_text(
             json.dumps(
                 {
                     "nodes": {"local": {"ip": "127.0.0.1", "user": USER_HOME.name, "home": str(USER_HOME), "disks": ["/tmp"]}},
-                    "frozen_readonly_paths": ["/tmp/mock_frozen_raw"],
+                    "frozen_readonly_paths": [mock_raw_str],
                     "gpu_auto_reserve": {"service_name": "gpu-auto-reserve.service"},
                 }
             ),
@@ -324,9 +323,9 @@ def main() -> int:
         )
         mock_env = {"AUTO_RESEARCH_CLUSTER_CONFIG": str(cfg_file)}
         test_binaries_and_plugin()
-        test_mcp_protocol_and_ultra_default(mock_env)
-        test_cluster_and_proxy_clis(mock_env)
-        test_hooks_and_project_lifecycle(mock_env)
+        test_mcp_protocol_and_ultra_default(mock_env, mock_raw_str)
+        test_cluster_and_proxy_clis(mock_env, mock_raw_str)
+        test_hooks_and_project_lifecycle(mock_env, mock_raw_str)
     print("=== ALL CHECKS PASSED ===")
     return 0
 

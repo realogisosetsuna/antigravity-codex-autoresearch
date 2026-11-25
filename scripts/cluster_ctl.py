@@ -278,18 +278,53 @@ def probe_all_nodes(node_list: list[str]) -> dict[str, Any]:
             ar = data.get("auto_reserve") if (RESERVE_HOST and n == RESERVE_HOST) else None
             reserved_by_us = {int(x) for x in (ar.get("reserved_by_us") or [])} if isinstance(ar, dict) else set()
             excluded_set = {int(x) for x in (ar.get("excluded_gpus") or [])} if isinstance(ar, dict) else set()
+            broker_info = (ar.get("broker") or {}) if isinstance(ar, dict) else {}
+            broker_allocs = broker_info.get("allocations") or {}
+            broker_grants = broker_info.get("grants") or {}
+            broker_yields = broker_info.get("yield_requests") or {}
+            broker_shields = broker_info.get("idle_shields") or {}
+            broker_quotas = broker_info.get("target_quotas") or {}
+            ar_owned = {int(x) for x in (broker_allocs.get("auto_research") or [])}
 
             for g in data.get("gpus", []):
                 idx = g["index"]
+                s_str = str(idx)
+                shield_pid = (broker_shields.get(s_str) or {}).get("pid")
+                real_pids = [p for p in g.get("pids", []) if p != shield_pid]
+                granted_to = (broker_grants.get(s_str) or {}).get("consumer")
+                yield_to = (broker_yields.get(s_str) or {}).get("to")
+
                 g["prod_reserved"] = idx in prod_set
                 g["reserved_by_us"] = idx in reserved_by_us
                 g["excluded_in_use"] = idx in excluded_set
-                if idx in prod_set or idx in excluded_set:
-                    g["available_for_research"] = False
-                elif idx in reserved_by_us:
-                    g["available_for_research"] = True
+                g["broker_owner"] = next((c for c, gs in broker_allocs.items() if idx in gs), None)
+                g["granted_to"] = granted_to
+                g["yield_to"] = yield_to
+                g["idle_shield_pid"] = shield_pid
+
+                if broker_info:
+                    if idx in ar_owned:
+                        # Owned by auto_research: reusable if no real job PID is active AND not yielding to higher priority
+                        g["available_for_research"] = (len(real_pids) == 0 and not yield_to and idx not in prod_set)
+                    elif idx in prod_set or idx in excluded_set:
+                        g["available_for_research"] = False
+                    elif idx in reserved_by_us:
+                        if granted_to == "auto_research":
+                            g["available_for_research"] = True
+                        elif granted_to is not None and granted_to != "auto_research":
+                            g["available_for_research"] = False
+                        else:
+                            ar_quota = broker_quotas.get("auto_research", 999)
+                            g["available_for_research"] = len(ar_owned) < ar_quota
+                    else:
+                        g["available_for_research"] = bool(g["idle"])
                 else:
-                    g["available_for_research"] = bool(g["idle"])
+                    if idx in prod_set or idx in excluded_set:
+                        g["available_for_research"] = False
+                    elif idx in reserved_by_us:
+                        g["available_for_research"] = True
+                    else:
+                        g["available_for_research"] = bool(g["idle"])
             data["node"] = n
             data["ip"] = NODES[n]["ip"]
             data["home"] = NODES[n]["home"]
@@ -328,10 +363,28 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"Claimable Research GPUs: [{','.join(free_gpus) if free_gpus else 'NONE'}]"
         )
         for g in info.get("gpus", []):
+            owner = g.get("broker_owner")
+            granted_to = g.get("granted_to")
+            yield_to = g.get("yield_to")
+            shield_pid = g.get("idle_shield_pid")
+            real_pids = [p for p in (g.get("pids") or []) if p != shield_pid]
             if g.get("reserved_by_us"):
-                tag = f"RESERVED_BY_US (claim via: {RESERVE_CTL} release --gpus {g['index']})"
+                if granted_to and granted_to != "auto_research":
+                    tag = f"RESERVED_FOR_{granted_to.upper()} (priority slot — reserved for {granted_to})"
+                else:
+                    tag = f"RESERVED_BY_US (claimable for auto_research via `{RESERVE_CTL} acquire --consumer auto_research --gpus {g['index']}` or auto-claimed by exec/launch-bg)"
+            elif owner == "auto_research":
+                if yield_to:
+                    tag = f"ALLOCATED_AUTO_RESEARCH (pids={real_pids} -> YIELD_ON_IDLE to '{yield_to}' per priority policy)"
+                elif real_pids:
+                    tag = f"ALLOCATED_AUTO_RESEARCH_BUSY (pids={real_pids})"
+                elif shield_pid:
+                    tag = f"ALLOCATED_AUTO_RESEARCH_IDLE (protected by 20G idle_shield pid={shield_pid}; ready for next job)"
+                else:
+                    tag = "ALLOCATED_AUTO_RESEARCH_IDLE (ready for next job)"
             elif g.get("prod_reserved") or g.get("excluded_in_use"):
-                tag = "EXCLUDED_IN_USE (production/active session — do NOT touch)"
+                who = f"owner={owner}" if owner else "production/active session"
+                tag = f"EXCLUDED_IN_USE ({who} — do NOT touch)"
             elif g.get("idle"):
                 tag = "IDLE"
             else:
@@ -359,7 +412,13 @@ def cmd_recommend_gpus(args: argparse.Namespace) -> int:
         info = data.get(n) or {}
         if not info.get("ok"):
             continue
-        avail_objs = [g for g in info.get("gpus", []) if g.get("available_for_research")]
+        avail_objs = sorted(
+            [g for g in info.get("gpus", []) if g.get("available_for_research")],
+            key=lambda g: (
+                0 if g.get("broker_owner") == "auto_research" else (1 if g.get("granted_to") == "auto_research" else 2),
+                g["index"],
+            ),
+        )
         data_disks = [
             d for d in info.get("disks", [])
             if d["path"].startswith("/mnt/data") and d["avail_gb"] >= args.min_free_gb
@@ -379,8 +438,8 @@ def cmd_recommend_gpus(args: argparse.Namespace) -> int:
                 "recommended_data_dir": top_disk,
                 "home": info["home"],
                 "requires_standby_release": bool(standby_ids),
-                "claim_cmd": f"{RESERVE_CTL} release --gpus {','.join(standby_ids)}" if standby_ids else None,
-                "return_cmd": f"{RESERVE_CTL} watch --gpus {','.join(standby_ids)}" if standby_ids else None,
+                "claim_cmd": f"{RESERVE_CTL} acquire --consumer auto_research --gpus {','.join(standby_ids)}" if standby_ids else None,
+                "return_cmd": f"{RESERVE_CTL} watch --consumer auto_research --gpus {csv_ids}" if (RESERVE_HOST and n == RESERVE_HOST) else None,
             }
             break
 
@@ -391,26 +450,50 @@ def cmd_recommend_gpus(args: argparse.Namespace) -> int:
     return 0
 
 
-def check_unreleased_standby_gpus(node: str, gpus_str: str) -> str | None:
+def prepare_node_gpus_for_research(node: str, gpus_str: str) -> str | None:
+    """Coordinate with optional `gpu_reserve_24h` priority broker before launching on `RESERVE_HOST`.
+
+    - Verifies requested GPU(s) belong to `auto_research` (or auto-claims permitted `reserved_by_us` GPUs).
+    - Honors cooperative `yield_requests` at inter-wave boundaries if a higher-priority consumer needs a card.
+    - Synchronously clears any 20 GiB `idle_shield` cushion so the launched job gets 100% clean VRAM.
+    """
     if not RESERVE_HOST or node != RESERVE_HOST or not RESERVE_STATUS:
         return None
-    req_ids = {int(x.strip()) for x in gpus_str.split(",") if x.strip().isdigit()}
+    req_ids = [int(x.strip()) for x in gpus_str.split(",") if x.strip().isdigit()]
     if not req_ids:
         return None
+    csv_ids = ",".join(str(i) for i in req_ids)
+
+    if RESERVE_CTL:
+        prep_cmd = f"{shlex.quote(RESERVE_CTL)} prepare-use --consumer auto_research --gpus {shlex.quote(csv_ids)} --json"
+        r_prep = run_on_node(node, prep_cmd, timeout=20)
+        if r_prep.returncode == 0:
+            return None
+        out_txt = (r_prep.stdout or "").strip()
+        err_txt = (r_prep.stderr or "").strip()
+        if "invalid choice: 'prepare-use'" not in err_txt and "unrecognized arguments" not in err_txt:
+            try:
+                payload = json.loads(out_txt.splitlines()[-1])
+                if payload.get("error"):
+                    return str(payload["error"])
+            except Exception:
+                pass
+            return err_txt or out_txt or f"Priority broker rejected GPU(s) {csv_ids} on `{node}`."
+
     r = run_on_node(node, f"cat {shlex.quote(RESERVE_STATUS)} 2>/dev/null || true", timeout=8)
     if r.returncode != 0 or not (r.stdout or "").strip():
         return None
     try:
         st = json.loads(r.stdout)
-        held = sorted(req_ids.intersection({int(x) for x in (st.get("reserved_by_us") or [])}))
+        held = sorted(set(req_ids).intersection({int(x) for x in (st.get("reserved_by_us") or [])}))
         if held:
             csv_held = ",".join(str(i) for i in held)
             return (
                 f"GPU(s) {csv_held} on `{node}` are currently held by standby daemon (`reserved_by_us`). "
                 f"Atomically claim and exempt them first with:\n"
-                f"  {RESERVE_CTL} release --gpus {csv_held}\n"
+                f"  {RESERVE_CTL} acquire --consumer auto_research --gpus {csv_held}\n"
                 f"and return them only after ALL experiment rounds finish with:\n"
-                f"  {RESERVE_CTL} watch --gpus {csv_held}"
+                f"  {RESERVE_CTL} watch --consumer auto_research --gpus {csv_held}"
             )
     except Exception:
         pass
@@ -419,7 +502,7 @@ def check_unreleased_standby_gpus(node: str, gpus_str: str) -> str | None:
 
 def cmd_exec(args: argparse.Namespace) -> int:
     if args.gpus:
-        err = check_unreleased_standby_gpus(args.node, args.gpus)
+        err = prepare_node_gpus_for_research(args.node, args.gpus)
         if err:
             print(err, file=sys.stderr)
             return 2
@@ -441,7 +524,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
 
 def cmd_launch_bg(args: argparse.Namespace) -> int:
     if args.gpus:
-        err = check_unreleased_standby_gpus(args.node, args.gpus)
+        err = prepare_node_gpus_for_research(args.node, args.gpus)
         if err:
             print(json.dumps({"ok": False, "node": args.node, "gpus": args.gpus, "error": err}, ensure_ascii=False, indent=2))
             return 2
